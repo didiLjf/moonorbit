@@ -4,7 +4,7 @@ enum PingPongMsg {
 }
 
 /// A simple behavior that responds to Ping with Pong.
-pub fn ping_pong_behavior(_context : Context, _state : Int, msg : PingPongMsg) -> Int {
+pub fn ping_pong_behavior(_context : Context, _state : Int, msg : PingPongMsg) -> Int raise {
   match msg {
     Ping => {
       println("Received Ping")

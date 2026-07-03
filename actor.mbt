@@ -11,7 +11,7 @@ pub struct ActorRef[Msg] {
 }
 
 /// A Behavior defines how an actor reacts to messages and updates its state.
-pub type Behavior[State, Msg] = (Context, State, Msg) -> State
+pub type Behavior[State, Msg] = (Context, State, Msg) -> State raise
 
 /// Sends a message to the actor.
 pub fn[Msg] ActorRef::send(self : ActorRef[Msg], msg : Msg) -> Unit {

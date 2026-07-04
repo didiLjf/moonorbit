@@ -3,11 +3,17 @@ pub struct ActorSystem {
   name : String
   next_actor_id : Ref[Int]
   group : @async.TaskGroup[Unit]
+  is_terminated : Ref[Bool]
 }
 
 /// Creates a new ActorSystem.
 pub fn ActorSystem::new(name : String, group : @async.TaskGroup[Unit]) -> ActorSystem {
-  { name, next_actor_id: { val: 0 }, group }
+  { name, next_actor_id: { val: 0 }, group, is_terminated: { val: false } }
+}
+
+/// Terminates the ActorSystem, stopping the scheduler.
+pub fn ActorSystem::terminate(self : ActorSystem) -> Unit {
+  self.is_terminated.val = true
 }
 
 /// Spawns a new actor with the given behavior and initial state.

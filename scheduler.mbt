@@ -8,8 +8,12 @@ pub fn Scheduler::new(system : ActorSystem) -> Scheduler {
   { system, }
 }
 
-/// Starts the scheduler event loop.
-pub fn Scheduler::run(_self : Scheduler) -> Unit {
-  // In a full implementation, this method would poll all actor mailboxes,
-  // and dispatch messages to their respective behaviors using async tasks.
+/// Starts the scheduler event loop, running until the system is terminated.
+pub async fn Scheduler::run(self : Scheduler) -> Unit {
+  for ;; {
+    if self.system.is_terminated.val {
+      break
+    }
+    @async.pause()
+  }
 }

@@ -9,19 +9,19 @@
 //   "moonbitlang/x@0.4.6",
 // }
 
-name = "caassien/moonorbit"
+name = "didiLjf/moonorbit"
 
 version = "0.1.0"
 
 readme = "README.mbt.md"
 
-repository = ""
+repository = "https://github.com/didiLjf/moonorbit"
 
 license = "Apache-2.0"
 
-keywords = []
+keywords = ["actor", "concurrency", "async"]
 
-description = ""
+description = "A lightweight, high-performance Actor concurrency framework for MoonBit"
 
 import {
   "moonbitlang/async@0.20.0",

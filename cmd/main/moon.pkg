@@ -1,7 +1,3 @@
-// import {
-//   "didiLjf/moonorbit" @lib,
-// }
-
 options(
   "is-main": true,
 )

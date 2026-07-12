@@ -1,0 +1,123 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "didiLjf/moonorbit"
+
+import {
+  "moonbitlang/async",
+  "moonbitlang/async/aqueue",
+  "moonbitlang/core/debug",
+  "moonbitlang/core/ref",
+}
+
+// Values
+pub async fn ping_pong_behavior(Context, Int, PingPongMsg) -> Int
+
+pub async fn[Msg] router_behavior(Context, Router[Msg], Msg) -> Router[Msg]
+
+// Errors
+type DummyError derive(@debug.Debug)
+
+// Types and methods
+type ActorControl
+
+pub enum ActorMsg[Msg] {
+  User(Msg)
+  System(SystemMessage)
+}
+
+pub struct ActorRef[Msg] {
+  id : Int
+  mailbox : @aqueue.Queue[ActorMsg[Msg]]
+}
+pub fn[Msg] ActorRef::send(Self[Msg], Msg) -> Unit
+pub async fn[Msg] ActorRef::send_async(Self[Msg], Msg) -> Unit
+
+pub enum ActorStatus {
+  Starting
+  Running
+  Restarting
+  Stopping
+  Stopped
+  Failed(String)
+}
+
+pub struct ActorSystem {
+  name : String
+  next_actor_id : @ref.Ref[Int]
+  group : @async.TaskGroup[Unit]
+  is_terminated : @ref.Ref[Bool]
+  registry : @ref.Ref[Array[ActorControl]]
+}
+pub fn ActorSystem::new(String, @async.TaskGroup[Unit]) -> Self
+pub fn[State, Msg] ActorSystem::spawn(Self, async (Context, State, Msg) -> State, State, supervisor? : Supervisor, lifecycle? : LifecycleCallbacks[State], mailbox_kind? : @aqueue.Kind, parent_id? : Int?) -> ActorRef[Msg]
+pub fn ActorSystem::terminate(Self) -> Unit
+
+pub struct Context {
+  system : ActorSystem
+  actor_id : Int
+  parent_id : Int?
+}
+pub fn Context::new(ActorSystem, Int, Int?) -> Self
+pub fn[Msg] Context::send(Self, ActorRef[Msg], Msg) -> Unit
+pub async fn[Msg] Context::send_async(Self, ActorRef[Msg], Msg) -> Unit
+pub fn[State, Msg] Context::spawn(Self, async (Self, State, Msg) -> State, State, supervisor? : Supervisor, lifecycle? : LifecycleCallbacks[State], mailbox_kind? : @aqueue.Kind) -> ActorRef[Msg]
+
+pub struct LifecycleCallbacks[State] {
+  pre_start : (Context, State) -> Unit
+  post_stop : (Context, State) -> Unit
+  pre_restart : (Context, State, Error) -> Unit
+  post_restart : (Context, State) -> Unit
+}
+pub fn[State] LifecycleCallbacks::default() -> Self[State]
+
+pub struct Mailbox[Msg] {
+  messages : Array[Msg]
+}
+pub fn[Msg] Mailbox::dequeue(Self[Msg]) -> Msg?
+pub fn[Msg] Mailbox::enqueue(Self[Msg], Msg) -> Unit
+pub fn[Msg] Mailbox::new() -> Self[Msg]
+
+type PingPongMsg
+
+pub struct Router[Msg] {
+  workers : Array[ActorRef[Msg]]
+  strategy : RoutingStrategy
+  next_index : @ref.Ref[Int]
+}
+pub fn[Msg] Router::new(Array[ActorRef[Msg]], RoutingStrategy) -> Self[Msg]
+pub fn[Msg] Router::route(Self[Msg], Msg) -> Unit
+
+pub enum RoutingStrategy {
+  RoundRobin
+  Broadcast
+  Random
+}
+
+pub struct Scheduler {
+  system : ActorSystem
+}
+pub fn Scheduler::new(ActorSystem) -> Self
+pub async fn Scheduler::run(Self) -> Unit
+
+pub enum SupervisionStrategy {
+  OneForOne
+  OneForAll
+  RestForOne
+}
+
+pub struct Supervisor {
+  strategy : SupervisionStrategy
+  max_retries : Int
+}
+pub fn Supervisor::new(SupervisionStrategy, Int) -> Self
+
+pub enum SystemMessage {
+  Stop
+  Restart
+  ChildFailed(Int, Error)
+}
+
+// Type aliases
+pub type Behavior[State, Msg] = async (Context, State, Msg) -> State
+
+// Traits
+

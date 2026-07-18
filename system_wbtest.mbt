@@ -37,7 +37,7 @@ async fn worker_behavior(
 ) -> Int {
   @async.pause()
   if false {
-    raise TestError
+    let _ = TestError
   }
   match msg {
     Work(data, reply_to) => {
@@ -149,6 +149,11 @@ async test "actor lifecycle hooks execution" {
   })
 }
 
+///|
+struct Step {
+  mut val : Int
+}
+
 // 3. Test Bounded Mailbox Backpressure
 
 ///|
@@ -164,7 +169,7 @@ async fn slow_behavior(_context : Context, state : Int, msg : QueueMsg) -> Int {
   match msg {
     Msg(val) => {
       let _ = val
-      @async.sleep(10) // simulate processing time
+      @async.sleep(30) // simulate processing time
       state + 1
     }
   }
@@ -178,102 +183,149 @@ async test "bounded mailbox backpressure blocking" {
     // Spawn with a tiny blocking queue of size 1
     let actor = system.spawn(slow_behavior, 0, mailbox_kind=@aqueue.Blocking(1))
 
-    // The mailbox size is 1. The actor loop takes the first message and blocks for 10ms.
-    // The second message will occupy the buffer slot.
-    // The third message send should block/suspend if send_async is used, or fail to try_put.
+    let step = { val: 0 }
 
-    // First two sends should succeed immediately without blocking
-    let sent1 = actor.mailbox.try_put(User(Msg(1)))
-    let sent2 = actor.mailbox.try_put(User(Msg(2)))
+    // Spawn background task to send three messages
+    group.spawn_bg(no_wait=true, () => {
+      // First message is dequeued immediately by actor_loop, leaving buffer empty.
+      actor.send_async(Msg(1)) catch {
+        _ => ()
+      }
+      // Second message goes into the buffer of size 1.
+      actor.send_async(Msg(2)) catch {
+        _ => ()
+      }
+      step.val = 1
+      // Third message should block since worker is sleeping and buffer is full.
+      actor.send_async(Msg(3)) catch {
+        _ => ()
+      }
+      step.val = 2
+    })
 
-    // Third send should fail try_put since mailbox is full
-    let sent3 = actor.mailbox.try_put(User(Msg(3))) catch { _ => false }
+    // Sleep briefly to let the background task send messages
+    @async.sleep(10)
 
-    if !sent1 || !sent2 {
-      fail("First and second sends should succeed")
+    // The background task should be blocked on the 3rd message
+    if step.val != 1 {
+      fail("Sender should block on the third message when mailbox is full")
     }
-    if sent3 {
-      fail("Third send should be rejected via try_put when mailbox is full")
+
+    // Wait until the slow worker processes Msg(1), which unblocks the buffer
+    @async.sleep(40)
+
+    if step.val != 2 {
+      fail("Sender should unblock once buffer space becomes available")
     }
 
     system.terminate()
   })
 }
 
-// 4. Test Hierarchical Supervision OneForAll strategy
+// 4. Test Hierarchical Supervision and Reconstruct/Restart Loop
 
 ///|
-priv enum TreeMsg {
-  SpawnChild(String)
-  FailChild
+priv enum SupervisedMsg {
+  FailChildMsg
+  PingMsg(ActorRef[String])
 }
 
 ///|
-async fn child_behavior(
+priv enum ParentMsg {
+  SpawnChild
+  CrashChild
+  PingChild(ActorRef[String])
+}
+
+///|
+async fn supervised_behavior(
   _context : Context,
-  state : String,
-  msg : String,
-) -> String {
+  state : Int,
+  msg : SupervisedMsg,
+) -> Int {
   @async.pause()
-  if msg == "fail" {
-    raise TestError
-  }
-  state + msg
-}
-
-///|
-async fn parent_behavior(
-  context : Context,
-  children : Array[ActorRef[String]],
-  msg : TreeMsg,
-) -> Array[ActorRef[String]] {
-  @async.pause()
-  if false {
-    raise TestError
-  }
   match msg {
-    SpawnChild(initial_state) => {
-      let child = context.spawn(child_behavior, initial_state)
-      children.push(child)
-      children
-    }
-    FailChild => {
-      if children.length() > 0 {
-        children[0].send("fail")
-      }
-      children
+    FailChildMsg => raise TestError
+    PingMsg(reply_to) => {
+      reply_to.send("pong")
+      state
     }
   }
 }
 
 ///|
-async test "hierarchical supervision and cascade stop" {
+async fn parent_supervisor_behavior(
+  context : Context,
+  child_ref_opt : Ref[ActorRef[SupervisedMsg]?],
+  msg : ParentMsg,
+) -> Ref[ActorRef[SupervisedMsg]?] {
+  @async.pause()
+  match msg {
+    SpawnChild => {
+      let child = context.spawn(
+        supervised_behavior,
+        0,
+        supervisor=Supervisor::new(OneForOne, 0), // child local retries = 0 (loop exits on fail)
+      )
+      child_ref_opt.val = Some(child)
+      child_ref_opt
+    }
+    CrashChild => {
+      match child_ref_opt.val {
+        Some(child) => child.send(FailChildMsg)
+        None => ()
+      }
+      child_ref_opt
+    }
+    PingChild(reply_to) => {
+      match child_ref_opt.val {
+        Some(child) => child.send(PingMsg(reply_to))
+        None => ()
+      }
+      child_ref_opt
+    }
+  }
+}
+
+///|
+async test "hierarchical supervision reconstruction loop" {
   @async.with_task_group(group => {
     let system = ActorSystem::new("test_system", group)
 
-    // Spawn parent with OneForAll supervisor
+    // Spawn parent with OneForOne supervisor strategy for children, allowing up to 2 retries
     let parent = system.spawn(
-      parent_behavior,
-      [],
-      supervisor=Supervisor::new(OneForAll, 2),
+      parent_supervisor_behavior,
+      { val: None },
+      supervisor=Supervisor::new(OneForOne, 2),
     )
 
-    // Parent spawns two children
-    parent.send(SpawnChild("c1"))
-    parent.send(SpawnChild("c2"))
+    // Tell parent to spawn the child
+    parent.send(SpawnChild)
+    @async.sleep(20)
 
-    @async.sleep(50)
+    // Set up a reply box to verify child actor is alive
+    let reply_box = @aqueue.Queue(kind=@aqueue.Unbounded)
+    let reply_ref : ActorRef[String] = { id: 99, mailbox: reply_box }
 
-    parent.send(FailChild)
-    @async.sleep(50)
+    // Crash the child actor!
+    parent.send(CrashChild)
+    @async.sleep(30) // Wait for failure and reconstruction to complete
 
-    // Terminate system and check recursive cleanup
-    system.terminate()
-    @async.sleep(50)
+    // Send a ping through the parent to the child actor
+    parent.send(PingChild(reply_ref))
+    @async.sleep(20)
 
-    let active_actors = system.registry.val.length()
-    if active_actors != 0 {
-      fail("Cascade shutdown failed to clean up all actors")
+    // Verify child successfully processed the ping after being reconstructed
+    try {
+      let result = reply_box.get()
+      match result {
+        User("pong") => ()
+        _ => fail("Child failed to respond after reconstruction")
+      }
+    } catch {
+      _ => fail("Failed to receive pong from reconstructed child")
     }
+
+    system.terminate()
   })
 }

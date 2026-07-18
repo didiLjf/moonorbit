@@ -43,12 +43,10 @@ MoonOrbit 完整实现了生产级 Actor 框架所需的各项核心能力：
 ### 1. 声明依赖
 在项目的 `moon.mod` 中添加 MoonOrbit 依赖：
 
-```json
-{
-  "name": "your_username/your_project",
-  "import": {
-    "didiLjf/moonorbit": "0.1.0"
-  }
+```moonbit
+// moon.mod
+import {
+  "didiLjf/moonorbit@0.1.0"
 }
 ```
 

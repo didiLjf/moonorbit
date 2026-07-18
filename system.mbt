@@ -17,6 +17,7 @@ struct ActorControl {
   children : Ref[Array[Int]]
   send_system : (SystemMessage) -> Unit
   status : Ref[ActorStatus]
+  recreate : () -> Unit
 }
 
 ///|
@@ -85,7 +86,15 @@ pub fn[State, Msg] ActorSystem::spawn(
     }
   }
 
-  let control = { id, parent_id, children, send_system, status }
+  let recreate = () => {
+    self.group.spawn_bg(no_wait=true, () => {
+      actor_loop(
+        context, initial_state, behavior, mailbox, supervisor, lifecycle,
+      )
+    })
+  }
+
+  let control = { id, parent_id, children, send_system, status, recreate }
   self.registry.val.push(control)
 
   // If this actor has a parent, register it under the parent's children
@@ -139,13 +148,37 @@ fn ActorSystem::stop_children(self : ActorSystem, parent_id : Int) -> Unit {
 }
 
 ///|
-/// Restarts all children of a parent actor.
-fn ActorSystem::restart_children(self : ActorSystem, parent_id : Int) -> Unit {
+/// Recreates a specific actor by ID. If it is running, sends it a Restart signal.
+/// If it has stopped/failed, spawns a new runner loop task for it.
+fn ActorSystem::recreate_actor(self : ActorSystem, actor_id : Int) -> Unit {
   let reg = self.registry.val
   for control in reg {
-    if control.parent_id == Some(parent_id) {
-      (control.send_system)(Restart)
+    if control.id == actor_id {
+      let current_status = control.status.val
+      match current_status {
+        Running | Starting => (control.send_system)(Restart)
+        _ => {
+          control.status.val = Restarting
+          (control.recreate)()
+        }
+      }
+      break
     }
+  }
+}
+
+///|
+/// Recreates all children of a parent actor.
+fn ActorSystem::recreate_children(self : ActorSystem, parent_id : Int) -> Unit {
+  let reg = self.registry.val
+  let children_ids = []
+  for control in reg {
+    if control.parent_id == Some(parent_id) {
+      children_ids.push(control.id)
+    }
+  }
+  for child_id in children_ids {
+    self.recreate_actor(child_id)
   }
 }
 
@@ -246,20 +279,27 @@ async fn[State, Msg] actor_loop(
 
             // Apply strategy
             match supervisor.strategy {
-              OneForOne => context.system.send_system_msg(child_id, Restart)
-              OneForAll => context.system.restart_children(context.actor_id)
+              OneForOne => context.system.recreate_actor(child_id)
+              OneForAll => context.system.recreate_children(context.actor_id)
               RestForOne => {
                 let children_list = context.system.registry.val
                 for control in children_list {
                   if control.parent_id == Some(context.actor_id) &&
                     control.id >= child_id {
-                    (control.send_system)(Restart)
+                    context.system.recreate_actor(control.id)
                   }
                 }
               }
             }
           } else {
             // Max retries exceeded for this child! Fail parent actor.
+            let new_reg = []
+            for control in context.system.registry.val {
+              if control.id != child_id {
+                new_reg.push(control)
+              }
+            }
+            context.system.registry.val = new_reg
             failed_err = Some(err)
             break
           }
@@ -297,7 +337,9 @@ async fn[State, Msg] actor_loop(
   let current_reg = context.system.registry.val
   for control in current_reg {
     if control.id == context.actor_id {
-      control.status.val = final_status
+      if !(control.status.val is Restarting) {
+        control.status.val = final_status
+      }
       break
     }
   }
@@ -319,12 +361,15 @@ async fn[State, Msg] actor_loop(
     None => ()
   }
 
-  // Remove self from registry
-  let new_reg = []
-  for control in context.system.registry.val {
-    if control.id != context.actor_id {
-      new_reg.push(control)
+  // Remove self from registry if we stopped normally or have no parent supervisor
+  let has_parent = context.parent_id is Some(_)
+  if failed_err is None || !has_parent {
+    let new_reg = []
+    for control in context.system.registry.val {
+      if control.id != context.actor_id {
+        new_reg.push(control)
+      }
     }
+    context.system.registry.val = new_reg
   }
-  context.system.registry.val = new_reg
 }

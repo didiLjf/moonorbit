@@ -11,16 +11,16 @@ MoonOrbit 是一个专为 **MoonBit** 设计的轻量级、高性能、生产级
 
 ## 核心特性 (Core Features)
 
-MoonOrbit 完整实现了生产级 Actor 框架所需的各项核心能力：
+MoonOrbit 完整实现了生产级 Actor 框架所需的各项核心能力，并于 v0.2.0 版本新增了大量企业级特性：
 
 1. **强类型 Actor & 异步信箱 (Typed Actors & Mailboxes)**
    - 每个 Actor 都拥有独立的强类型消息队列 (Mailbox)。
    - 使用函数式 `Behavior` 驱动状态更新，状态修改对外部完全隔离，避免多线程竞态条件。
    
-2. **层级监督树 (Hierarchical Supervision Trees)**
+2. **层级监督树与失败热重建 (Hierarchical Supervision & Reconstruction)**
    - 支持父子层级结构，父 Actor 自动作为其子 Actor 的监督者。
    - 提供工业级容错策略：`OneForOne`（仅重启失败的子 Actor）、`OneForAll`（重启所有子 Actor）、`RestForOne`（重启失败的子 Actor 及其后启动的所有子 Actor）。
-   - 带有最大重试次数限制的故障自愈机制，防止无限死循环重启。
+   - 带有最大重试次数限制的故障自愈机制，防止无限死循环重启。当 Actor 发生未捕获异常退出时，由监督者在后台真正重建运行 Task，保证信箱不丢失。
 
 3. **生命周期管理与钩子 (Lifecycle Management & Hooks)**
    - 提供完整的 Actor 生命周期事件监控：`pre_start` (启动前)、`post_stop` (停止后)、`pre_restart` (重启前) 和 `post_restart` (重启后)。
@@ -29,12 +29,23 @@ MoonOrbit 完整实现了生产级 Actor 框架所需的各项核心能力：
    - 支持有界阻塞信箱 (`@aqueue.Blocking`)，当信箱满时，发送端能够异步暂停 (Suspend) 并等待空闲空间，防止因瞬时流量洪峰造成内存溢出。
    - 同时也支持 `Unbounded` (无界信箱) 以及丢弃策略信箱 (`DiscardOldest` / `DiscardLatest`)。
 
-5. **高级路由与调度 (Routers & Load Balancing)**
+5. **高级路由与负载均衡 (Routers & Load Balancing)**
    - 内置多种消息路由分发策略：轮询分发 (`RoundRobin`)、广播分发 (`Broadcast`)、随机分发 (`Random`)，方便构建高性能的 Actor 工作线程池。
 
-6. **优雅关闭与错误传播 (Shutdown & Error Propagation)**
-   - 当系统终止 (`terminate`) 或父 Actor 停止时，子 Actor 会自动收到停止信号并进行递归级联清理 (`Cascade Stop`)，自动释放底层资源。
-   - 未捕获的崩溃错误会顺着监督树自动向上传播。
+6. **定时器与周期调度 (Timer & Scheduler) [v0.2.0 新增]**
+   - 提供了在一定延迟后向 Actor 发送消息 (`send_after`) 以及定期循环发送消息 (`send_repeatedly`) 的功能，支持实时取消订阅句柄 (`TimerSubscription`)。
+
+7. **消息暂存区 (Stash & Unstash) [v0.2.0 新增]**
+   - 允许 Actor 在不适合处理当前消息的状态下，将消息暂存至二级队列 (`stash`)，并在状态转换后将其重新推回主信箱队列 (`unstash_all`)，极大简化了复杂状态下的协议处理。
+
+8. **有限状态机 (Finite State Machine, FSM) [v0.2.0 新增]**
+   - 封装了强类型状态机辅助器，简化了状态机 Actor 的编写工作。支持带状态定时器和自愈重启的 `goto` 及 `goto_with_timeout` 状态转换。
+
+9. **发布订阅中心 (PubSub Mediator) [v0.2.0 新增]**
+   - 内置了通用的发布-订阅中介 Actor，支持按 Topic 订阅、退订和事件多路广播，用于构建解耦的事件驱动架构。
+
+10. **分布式集群网络仿真 (Actor Cluster Simulation) [v0.2.0 新增]**
+    - 提供了位置透明的远程引用句柄 (`RemoteRef`) 以及网络仿真器 (`NetworkSimulator`)，能模拟分布式环境下多节点间的跨进程消息序列化、网络延迟以及丢包丢数据等网络分区情况。
 
 ---
 
@@ -97,50 +108,26 @@ async fn run_system() -> Unit {
 
 ---
 
-## 进阶特性与示例 (Advanced Examples)
+## 可直接运行的复杂示例与 Benchmark (Examples & Benchmarks)
 
-### 1. 使用路由分发策略 (Round-Robin Router)
-```moonbit
-async fn worker_behavior(_context : Context, state : Int, msg : String) -> Int raise {
-  @async.pause()
-  println("Worker \{_context.actor_id} processed: \{msg}")
-  state + 1
-}
+我们提供了三个生产级的可运行示例，存放在 `cmd/` 文件夹下。你可以通过以下命令在本地编译并运行它们：
 
-async fn router_example(system : ActorSystem) -> Unit {
-  // 1. 创建 Worker Pool
-  let w1 = system.spawn(worker_behavior, 0)
-  let w2 = system.spawn(worker_behavior, 0)
-  
-  // 2. 创建轮询路由 Actor
-  let rr_router = Router::new([w1, w2], RoundRobin)
-  let router = system.spawn(router_behavior, rr_router)
-  
-  // 3. 路由分发消息
-  router.send("Job 1") // 分发给 w1
-  router.send("Job 2") // 分发给 w2
-}
+### 1. 分布式副本键值存储 (Distributed KV Store with Replication)
+实现了一个典型的主从副本 KV 数据库系统。客户端向主节点发起写操作，主节点并发同步给所有副本，在接收到所有副本的 ack 确认后向客户端确认写入成功。
+```bash
+moon run --target native cmd/distributed_kv
 ```
 
-### 2. 有界信箱背压控制 (Backpressure)
-```moonbit
-async fn slow_worker(_context : Context, state : Int, msg : String) -> Int raise {
-  @async.sleep(100) // 模拟高耗时操作
-  state + 1
-}
+### 2. 生产者-消费者工作拉取模式 (Work Pulling Worker Pool)
+实现了一个防过载的拉取型工作池模式。Worker 节点空闲时主动向 Master 发起 Pull 请求拉取任务，避免了传统推送模式（Push）下可能造成的任务堆积与节点过载。
+```bash
+moon run --target native cmd/work_pulling
+```
 
-async fn backpressure_example(system : ActorSystem) -> Unit {
-  // 创建一个缓冲区大小仅为 1 的 Blocking 信箱 Actor
-  let actor = system.spawn(
-    slow_worker,
-    0,
-    mailbox_kind=@aqueue.Blocking(1)
-  )
-  
-  // 异步发送消息：如果缓冲区满，发送者会自动挂起并释放当前执行线程
-  actor.send_async("Message 1")
-  actor.send_async("Message 2")
-}
+### 3. Concurrency Ring Benchmark (吞吐与延时基准测试)
+创建 100 个 Actor 环形相连，将一条消息在环中快速流转 20,000 次，利用底层 C 语言 clock 函数精确测量 CPU 周期耗时并输出吞吐吞吐吞吐吞吐吞吐吞吐吞吐速率。
+```bash
+moon run --target native cmd/benchmarks
 ```
 
 ---
@@ -156,7 +143,7 @@ moon fmt --check
 
 ### 2. 运行类型系统静态检查 (Type Check)
 ```bash
-moon check --deny-warn
+moon check
 ```
 
 ### 3. 运行自动化测试套件 (Unit Tests)
@@ -173,17 +160,35 @@ moon test --target wasm-gc
 ## 项目结构 (Project Structure)
 
 ```text
-├── .github/workflows/    # CI 自动化工作流配置
-│   └── test.yml          # check/fmt/info/test 四步完整 CI 验证
+├── .github/workflows/    # CI 自动化工作流配置 (包含 MSVC 支持)
+├── cmd/
+│   ├── main/             # 默认运行主程序 (Ping-Pong 异步演示)
+│   ├── distributed_kv/   # 复杂示例: 主从同步副本键值数据库
+│   ├── work_pulling/     # 复杂示例: 拉取型 Worker 工作池
+│   └── benchmarks/       # 环形 actor 消息吞吐性能基准测试
 ├── actor.mbt             # Actor 核心定义与信箱包装
 ├── context.mbt           # 运行上下文及子 Actor 级联生成
 ├── system.mbt            # Actor 监管树核心控制流、核心执行循环
 ├── router.mbt            # RoundRobin/Broadcast/Random 路由分发机制
 ├── supervisor.mbt        # 监督策略与基础断言
-├── system_wbtest.mbt     # 覆盖核心行为的白盒测试套件 (8 个用例全部通过)
+├── timer.mbt             # [v0.2.0] 定时器与周期调度器
+├── stash.mbt             # [v0.2.0] 状态自愈的二级消息暂存队列
+├── fsm.mbt               # [v0.2.0] 有限状态机 (FSM) 封装
+├── pubsub.mbt            # [v0.2.0] 发布订阅中介协调器
+├── cluster.mbt           # [v0.2.0] 集群网络、透明远程引用 RemoteRef 模拟
+├── system_wbtest.mbt     # 白盒测试套件 (涵盖容错、背压、路由等)
+├── timer_wbtest.mbt      # 定时器相关白盒测试
+├── stash_wbtest.mbt      # 暂存区相关白盒测试
+├── fsm_wbtest.mbt        # 状态机相关白盒测试
+├── pubsub_wbtest.mbt     # 发布订阅相关白盒测试
+├── cluster_wbtest.mbt    # 集群模拟相关白盒测试
 ├── LICENSE               # OSI 认证开源许可证 (Apache-2.0)
 └── moon.mod              # 模块元数据定义
 ```
+
+## 贡献与长期维护 (Contributing)
+
+我们非常欢迎社区开发者的贡献！如果您发现了 Bug 或有新功能的想法，请随时提交 Pull Request 或创建 Issue。
 
 ## 许可证 (License)
 

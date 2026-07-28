@@ -18,6 +18,7 @@ struct ActorControl {
   send_system : (SystemMessage) -> Unit
   status : Ref[ActorStatus]
   recreate : () -> Unit
+  send_user_serialized : (String) -> Unit
 }
 
 ///|
@@ -67,6 +68,7 @@ pub fn[State, Msg] ActorSystem::spawn(
   lifecycle? : LifecycleCallbacks[State] = LifecycleCallbacks::default(),
   mailbox_kind? : @aqueue.Kind = @aqueue.Unbounded,
   parent_id? : Int? = None,
+  deserializer? : (String) -> Msg,
 ) -> ActorRef[Msg] {
   let id = self.next_actor_id.val
   self.next_actor_id.val = id + 1
@@ -94,7 +96,25 @@ pub fn[State, Msg] ActorSystem::spawn(
     })
   }
 
-  let control = { id, parent_id, children, send_system, status, recreate }
+  let send_user_serialized = (data : String) => {
+    match deserializer {
+      Some(deser) => {
+        let msg = deser(data)
+        actor_ref.send(msg)
+      }
+      None => ()
+    }
+  }
+
+  let control = {
+    id,
+    parent_id,
+    children,
+    send_system,
+    status,
+    recreate,
+    send_user_serialized,
+  }
   self.registry.val.push(control)
 
   // If this actor has a parent, register it under the parent's children

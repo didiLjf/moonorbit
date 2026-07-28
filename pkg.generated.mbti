@@ -9,7 +9,15 @@ import {
 }
 
 // Values
+pub async fn gossip_behavior(Context, GossipState, GossipMsg) -> GossipState
+
+pub async fn journal_behavior(Context, EventJournal, JournalMsg) -> EventJournal
+
 pub async fn ping_pong_behavior(Context, Int, PingPongMsg) -> Int
+
+pub async fn[PubMsg] pubsub_behavior(Context, PubSubState[PubMsg], PubSubMsg[PubMsg]) -> PubSubState[PubMsg]
+
+pub async fn raft_behavior(Context, RaftNodeState, RaftMsg) -> RaftNodeState
 
 pub async fn[Msg] router_behavior(Context, Router[Msg], Msg) -> Router[Msg]
 
@@ -29,7 +37,9 @@ pub struct ActorRef[Msg] {
   mailbox : @aqueue.Queue[ActorMsg[Msg]]
 }
 pub fn[Msg] ActorRef::send(Self[Msg], Msg) -> Unit
+pub fn[Msg] ActorRef::send_after(Self[Msg], ActorSystem, Int, Msg) -> TimerSubscription
 pub async fn[Msg] ActorRef::send_async(Self[Msg], Msg) -> Unit
+pub fn[Msg] ActorRef::send_repeatedly(Self[Msg], ActorSystem, Int, Int, Msg) -> TimerSubscription
 
 pub enum ActorStatus {
   Starting
@@ -48,7 +58,7 @@ pub struct ActorSystem {
   registry : @ref.Ref[Array[ActorControl]]
 }
 pub fn ActorSystem::new(String, @async.TaskGroup[Unit]) -> Self
-pub fn[State, Msg] ActorSystem::spawn(Self, async (Context, State, Msg) -> State, State, supervisor? : Supervisor, lifecycle? : LifecycleCallbacks[State], mailbox_kind? : @aqueue.Kind, parent_id? : Int?) -> ActorRef[Msg]
+pub fn[State, Msg] ActorSystem::spawn(Self, async (Context, State, Msg) -> State, State, supervisor? : Supervisor, lifecycle? : LifecycleCallbacks[State], mailbox_kind? : @aqueue.Kind, parent_id? : Int?, deserializer? : (String) -> Msg) -> ActorRef[Msg]
 pub fn ActorSystem::terminate(Self) -> Unit
 
 pub struct Context {
@@ -60,6 +70,43 @@ pub fn Context::new(ActorSystem, Int, Int?) -> Self
 pub fn[Msg] Context::send(Self, ActorRef[Msg], Msg) -> Unit
 pub async fn[Msg] Context::send_async(Self, ActorRef[Msg], Msg) -> Unit
 pub fn[State, Msg] Context::spawn(Self, async (Self, State, Msg) -> State, State, supervisor? : Supervisor, lifecycle? : LifecycleCallbacks[State], mailbox_kind? : @aqueue.Kind) -> ActorRef[Msg]
+
+pub struct EventJournal {
+  events : Map[Int, Array[String]]
+}
+pub fn EventJournal::new() -> Self
+
+pub struct Fsm[State, Data] {
+  mut current_state : State
+  mut current_data : Data
+  mut timer_sub : TimerSubscription?
+}
+pub fn[State, Data] Fsm::cancel_timer(Self[State, Data]) -> Unit
+pub fn[State, Data] Fsm::data(Self[State, Data]) -> Data
+pub fn[State, Data] Fsm::goto(Self[State, Data], State, Data) -> Unit
+pub fn[State, Data, Msg] Fsm::goto_with_timeout(Self[State, Data], State, Data, (Int, Msg), ActorRef[Msg], ActorSystem) -> Unit
+pub fn[State, Data] Fsm::new(State, Data) -> Self[State, Data]
+pub fn[State, Data] Fsm::state(Self[State, Data]) -> State
+
+pub enum GossipMsg {
+  GossipTick
+  GossipUpdate(String, Map[String, String])
+  AddPeer(String, ActorRef[GossipMsg])
+  GetStatus(ActorRef[Map[String, String]])
+}
+
+pub struct GossipState {
+  node_name : String
+  membership : Map[String, String]
+  peers : Map[String, ActorRef[GossipMsg]]
+  mut seed : Int
+}
+pub fn GossipState::new(String) -> Self
+
+pub enum JournalMsg {
+  WriteEvent(Int, String, ActorRef[Unit])
+  ReadEvents(Int, ActorRef[Array[String]])
+}
 
 pub struct LifecycleCallbacks[State] {
   pre_start : (Context, State) -> Unit
@@ -76,7 +123,83 @@ pub fn[Msg] Mailbox::dequeue(Self[Msg]) -> Msg?
 pub fn[Msg] Mailbox::enqueue(Self[Msg], Msg) -> Unit
 pub fn[Msg] Mailbox::new() -> Self[Msg]
 
+pub struct NetworkSimulator {
+  nodes : Map[String, ActorSystem]
+  mut drop_probability : Int
+  mut latency : Int
+  mut seed : Int
+}
+pub fn NetworkSimulator::new() -> Self
+pub fn NetworkSimulator::register_node(Self, String, ActorSystem) -> Unit
+pub fn NetworkSimulator::send_remote(Self, String, Int, String) -> Unit
+pub fn NetworkSimulator::set_drop_probability(Self, Int) -> Unit
+pub fn NetworkSimulator::set_latency(Self, Int) -> Unit
+
+pub struct PersistentActor[State, Event, Command] {
+  actor_id : Int
+  mut state : State
+  journal_ref : ActorRef[JournalMsg]
+  command_handler : (State, Command) -> Array[Event]
+  event_handler : (State, Event) -> State
+  serializer : (Event) -> String
+  deserializer : (String) -> Event
+}
+pub fn[State, Event, Command] PersistentActor::new(Int, State, ActorRef[JournalMsg], (State, Command) -> Array[Event], (State, Event) -> State, (Event) -> String, (String) -> Event) -> Self[State, Event, Command]
+pub async fn[State, Event, Command] PersistentActor::process_command(Self[State, Event, Command], Context, Command) -> Unit
+pub async fn[State, Event, Command] PersistentActor::recover(Self[State, Event, Command], Context) -> Unit
+pub fn[State, Event, Command] PersistentActor::state(Self[State, Event, Command]) -> State
+
 type PingPongMsg
+
+pub enum PubSubMsg[PubMsg] {
+  Subscribe(String, ActorRef[PubMsg])
+  Unsubscribe(String, ActorRef[PubMsg])
+  Publish(String, PubMsg)
+}
+
+pub struct PubSubState[PubMsg] {
+  subscribers : Map[String, Array[ActorRef[PubMsg]]]
+}
+pub fn[PubMsg] PubSubState::new() -> Self[PubMsg]
+
+pub enum RaftMsg {
+  InitRaft(ActorRef[RaftMsg])
+  RequestVote(Int, Int, ActorRef[RaftMsg])
+  RequestVoteReply(Int, Bool)
+  AppendEntries(Int, Int, Array[String])
+  AppendEntriesReply(Int, Int, Bool)
+  ElectionTimeout
+  HeartbeatTick
+}
+
+pub struct RaftNodeState {
+  node_id : Int
+  mut role : RaftRole
+  mut current_term : Int
+  mut voted_for : Int?
+  mut votes_received : Int
+  peers : Map[Int, ActorRef[RaftMsg]]
+  mut leader_id : Int?
+  log : Array[String]
+  output : @ref.Ref[Array[String]]
+  mut self_ref : ActorRef[RaftMsg]?
+}
+pub fn RaftNodeState::new(Int, @ref.Ref[Array[String]]) -> Self
+
+pub enum RaftRole {
+  Follower
+  Candidate
+  Leader
+} derive(Eq)
+
+pub struct RemoteRef[Msg] {
+  target_node : String
+  target_actor_id : Int
+  simulator : NetworkSimulator
+  serializer : (Msg) -> String
+}
+pub fn[Msg] RemoteRef::new(String, Int, NetworkSimulator, (Msg) -> String) -> Self[Msg]
+pub fn[Msg] RemoteRef::send(Self[Msg], Msg) -> Unit
 
 pub struct Router[Msg] {
   workers : Array[ActorRef[Msg]]
@@ -98,6 +221,14 @@ pub struct Scheduler {
 pub fn Scheduler::new(ActorSystem) -> Self
 pub async fn Scheduler::run(Self) -> Unit
 
+pub struct Stash[Msg] {
+  mut buffer : Array[Msg]
+}
+pub fn[Msg] Stash::length(Self[Msg]) -> Int
+pub fn[Msg] Stash::new() -> Self[Msg]
+pub fn[Msg] Stash::stash(Self[Msg], Msg) -> Unit
+pub fn[Msg] Stash::unstash_all(Self[Msg], ActorRef[Msg]) -> Unit
+
 pub enum SupervisionStrategy {
   OneForOne
   OneForAll
@@ -115,6 +246,11 @@ pub enum SystemMessage {
   Restart
   ChildFailed(Int, Error)
 }
+
+pub struct TimerSubscription {
+  cancel : @ref.Ref[Bool]
+}
+pub fn TimerSubscription::cancel(Self) -> Unit
 
 // Type aliases
 pub type Behavior[State, Msg] = async (Context, State, Msg) -> State

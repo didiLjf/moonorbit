@@ -1,4 +1,5 @@
 // Event recorder helper for tests
+
 ///|
 priv struct TestEventLog {
   events : Ref[Array[String]]

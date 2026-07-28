@@ -1,6 +1,6 @@
 ///|
 enum ReplicaMsg {
-  Replicate(String, String, @didiLjf/moonorbit.ActorRef[Unit])
+  Replicate(String, String, @didiLjf/moonorbit.ActorRef[MasterMsg])
 }
 
 ///|
@@ -16,10 +16,10 @@ async fn replica_behavior(
 ) -> ReplicaState {
   @async.pause()
   match msg {
-    Replicate(key, value, ack_ref) => {
+    Replicate(key, value, master_ref) => {
       state.db.set(key, value)
       println("Replica replicated: " + key + " = " + value)
-      ack_ref.send(())
+      master_ref.send(ReplicaAck(key, value))
       state
     }
   }
@@ -27,8 +27,9 @@ async fn replica_behavior(
 
 ///|
 enum MasterMsg {
-  Put(String, String, @didiLjf/moonorbit.ActorRef[Unit])
-  Get(String, @didiLjf/moonorbit.ActorRef[String?])
+  InitMaster(@didiLjf/moonorbit.ActorRef[MasterMsg])
+  Put(String, String, @didiLjf/moonorbit.ActorRef[ClientMsg])
+  Get(String, @didiLjf/moonorbit.ActorRef[ClientMsg])
   RegisterReplica(@didiLjf/moonorbit.ActorRef[ReplicaMsg])
   ReplicaAck(String, String)
 }
@@ -37,18 +38,23 @@ enum MasterMsg {
 struct MasterState {
   db : Map[String, String]
   replicas : Array[@didiLjf/moonorbit.ActorRef[ReplicaMsg]]
-  pending_acks : Map[String, Int] // tracking how many replica acks are pending for a write
-  client_acks : Map[String, @didiLjf/moonorbit.ActorRef[Unit]]
+  pending_acks : Map[String, Int]
+  client_acks : Map[String, @didiLjf/moonorbit.ActorRef[ClientMsg]]
+  mut self_ref : @didiLjf/moonorbit.ActorRef[MasterMsg]?
 }
 
 ///|
 async fn master_behavior(
-  context : @didiLjf/moonorbit.Context,
+  _context : @didiLjf/moonorbit.Context,
   state : MasterState,
   msg : MasterMsg,
 ) -> MasterState {
   @async.pause()
   match msg {
+    InitMaster(ref_) => {
+      state.self_ref = Some(ref_)
+      state
+    }
     RegisterReplica(rep_ref) => {
       state.replicas.push(rep_ref)
       println("Master registered a new replica.")
@@ -58,23 +64,24 @@ async fn master_behavior(
       state.db.set(key, value)
       println("Master put: " + key + " = " + value)
       if state.replicas.length() == 0 {
-        client_ref.send(())
+        client_ref.send(WriteAck)
       } else {
         let write_id = key + ":" + value
         state.pending_acks.set(write_id, state.replicas.length())
         state.client_acks.set(write_id, client_ref)
-        // Spawn an actor to listen for replication acks, or handle it in master!
-        // To handle in master: when a replica completes, it sends ReplicaAck(key, value) to master.
-        let ack_collector = context.self_ref()
-        for replica in state.replicas {
-          replica.send(Replicate(key, value, @unsafe.cast(ack_collector)))
+        match state.self_ref {
+          Some(self_ref) =>
+            for replica in state.replicas {
+              replica.send(Replicate(key, value, self_ref))
+            }
+          None => ()
         }
       }
       state
     }
     Get(key, client_ref) => {
       let val = state.db.get(key)
-      client_ref.send(val)
+      client_ref.send(ReadResult(val))
       state
     }
     ReplicaAck(key, value) => {
@@ -88,7 +95,7 @@ async fn master_behavior(
               Some(client_ref) => {
                 state.client_acks.remove(write_id)
                 println("Replication completed for write: " + write_id)
-                client_ref.send(())
+                client_ref.send(WriteAck)
               }
               None => ()
             }
@@ -102,8 +109,6 @@ async fn master_behavior(
     }
   }
 }
-
-// Client logic
 
 ///|
 enum ClientMsg {
@@ -141,7 +146,7 @@ async fn client_behavior(
 
 ///|
 fn main {
-  @async.with_task_group(fn(group) {
+  @async.with_task_group(group => {
     let system = @didiLjf/moonorbit.ActorSystem::new("dist_kv_system", group)
 
     // Spawn Master
@@ -150,8 +155,10 @@ fn main {
       replicas: [],
       pending_acks: Map([]),
       client_acks: Map([]),
+      self_ref: None,
     }
     let master = system.spawn(master_behavior, master_state)
+    master.send(InitMaster(master))
 
     // Spawn 2 Replicas
     let rep_state1 = { db: Map([]) }
@@ -163,8 +170,8 @@ fn main {
     master.send(RegisterReplica(replica2))
 
     // Spawn Client
-    let client_done = { val: false }
-    let client_result = { val: None }
+    let client_done : Ref[Bool] = { val: false }
+    let client_result : Ref[String?] = { val: None }
     let client_state = { done: client_done, result: client_result }
     let client = system.spawn(client_behavior, client_state)
 
@@ -172,7 +179,7 @@ fn main {
 
     // Write a key
     println("Client writing: name = Alice")
-    master.send(Put("name", "Alice", @unsafe.cast(client)))
+    master.send(Put("name", "Alice", client))
 
     // Wait for write ack
     for i = 0; i < 50; i = i + 1 {
@@ -190,7 +197,7 @@ fn main {
 
     // Reset client state and read the key back
     client_done.val = false
-    master.send(Get("name", @unsafe.cast(client)))
+    master.send(Get("name", client))
 
     // Wait for read result
     for i = 0; i < 50; i = i + 1 {

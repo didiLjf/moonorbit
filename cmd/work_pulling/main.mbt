@@ -6,6 +6,7 @@ struct Task {
 
 ///|
 enum WorkerMsg {
+  InitWorker(@didiLjf/moonorbit.ActorRef[WorkerMsg])
   Work(Task, @didiLjf/moonorbit.ActorRef[MasterMsg])
 }
 
@@ -13,31 +14,40 @@ enum WorkerMsg {
 struct WorkerState {
   id : Int
   mut tasks_completed : Int
+  mut self_ref : @didiLjf/moonorbit.ActorRef[WorkerMsg]?
 }
 
 ///|
 async fn worker_behavior(
-  context : @didiLjf/moonorbit.Context,
+  _context : @didiLjf/moonorbit.Context,
   state : WorkerState,
   msg : WorkerMsg,
 ) -> WorkerState {
   @async.pause()
   match msg {
+    InitWorker(ref_) => {
+      state.self_ref = Some(ref_)
+      state
+    }
     Work(task, master_ref) => {
-      println(
-        "Worker " +
-        state.id.to_string() +
-        " processing task " +
-        task.id.to_string() +
-        ": " +
-        task.payload,
-      )
-      // Simulate work processing time
-      @async.sleep(30)
-      state.tasks_completed = state.tasks_completed + 1
-      master_ref.send(TaskDone(task.id))
+      if task.id >= 0 {
+        println(
+          "Worker " +
+          state.id.to_string() +
+          " processing task " +
+          task.id.to_string() +
+          ": " +
+          task.payload,
+        )
+        @async.sleep(30)
+        state.tasks_completed = state.tasks_completed + 1
+        master_ref.send(TaskDone(task.id))
+      }
       // Pull next work immediately
-      master_ref.send(Pull(@unsafe.cast(context.self_ref())))
+      match state.self_ref {
+        Some(self_ref) => master_ref.send(Pull(self_ref))
+        None => ()
+      }
       state
     }
   }
@@ -45,6 +55,7 @@ async fn worker_behavior(
 
 ///|
 enum MasterMsg {
+  InitMaster(@didiLjf/moonorbit.ActorRef[MasterMsg])
   RegisterWorker(@didiLjf/moonorbit.ActorRef[WorkerMsg])
   Pull(@didiLjf/moonorbit.ActorRef[WorkerMsg])
   SubmitTask(Task)
@@ -57,52 +68,65 @@ struct MasterState {
   idle_workers : Array[@didiLjf/moonorbit.ActorRef[WorkerMsg]]
   active_tasks : Map[Int, @didiLjf/moonorbit.ActorRef[WorkerMsg]]
   tasks_finished : Ref[Int]
+  mut self_ref : @didiLjf/moonorbit.ActorRef[MasterMsg]?
 }
 
 ///|
 async fn master_behavior(
-  context : @didiLjf/moonorbit.Context,
+  _context : @didiLjf/moonorbit.Context,
   state : MasterState,
   msg : MasterMsg,
 ) -> MasterState {
   @async.pause()
   match msg {
+    InitMaster(ref_) => {
+      state.self_ref = Some(ref_)
+      state
+    }
     RegisterWorker(worker_ref) => {
       println("Master registered new worker.")
-      // Automatically pull for the first time
-      let self_ref = context.self_ref()
-      worker_ref.send(
-        Work(Task::{ id: -1, payload: "INIT" }, @unsafe.cast(self_ref)),
-      )
+      // Automatically pull for the first time by triggering a dummy work
+      match state.self_ref {
+        Some(self_ref) =>
+          worker_ref.send(Work(Task::{ id: -1, payload: "INIT" }, self_ref))
+        None => ()
+      }
       state
     }
     Pull(worker_ref) => {
-      if state.pending_tasks.length() > 0 {
-        let task = state.pending_tasks.remove(0)
-        state.active_tasks.set(task.id, worker_ref)
-        worker_ref.send(Work(task, @unsafe.cast(context.self_ref())))
-      } else {
-        // Add to idle list if not already there
-        let mut exists = false
-        for w in state.idle_workers {
-          if w.id == worker_ref.id {
-            exists = true
-            break
+      match state.self_ref {
+        Some(self_ref) =>
+          if state.pending_tasks.length() > 0 {
+            let task = state.pending_tasks.remove(0)
+            state.active_tasks.set(task.id, worker_ref)
+            worker_ref.send(Work(task, self_ref))
+          } else {
+            let mut exists = false
+            for w in state.idle_workers {
+              if w.id == worker_ref.id {
+                exists = true
+                break
+              }
+            }
+            if !exists {
+              state.idle_workers.push(worker_ref)
+            }
           }
-        }
-        if !exists {
-          state.idle_workers.push(worker_ref)
-        }
+        None => ()
       }
       state
     }
     SubmitTask(task) => {
-      if state.idle_workers.length() > 0 {
-        let worker_ref = state.idle_workers.remove(0)
-        state.active_tasks.set(task.id, worker_ref)
-        worker_ref.send(Work(task, @unsafe.cast(context.self_ref())))
-      } else {
-        state.pending_tasks.push(task)
+      match state.self_ref {
+        Some(self_ref) =>
+          if state.idle_workers.length() > 0 {
+            let worker_ref = state.idle_workers.remove(0)
+            state.active_tasks.set(task.id, worker_ref)
+            worker_ref.send(Work(task, self_ref))
+          } else {
+            state.pending_tasks.push(task)
+          }
+        None => ()
       }
       state
     }
@@ -121,33 +145,43 @@ async fn master_behavior(
 
 ///|
 fn main {
-  @async.with_task_group(fn(group) {
+  @async.with_task_group(group => {
     let system = @didiLjf/moonorbit.ActorSystem::new(
       "work_pulling_system", group,
     )
 
-    let tasks_finished = { val: 0 }
+    let tasks_finished : Ref[Int] = { val: 0 }
     let master_state = {
       pending_tasks: [],
       idle_workers: [],
       active_tasks: Map([]),
       tasks_finished,
+      self_ref: None,
     }
     let master = system.spawn(master_behavior, master_state)
+    master.send(InitMaster(master))
 
     // Spawn 3 Workers
     let worker1 = system.spawn(worker_behavior, WorkerState::{
       id: 1,
       tasks_completed: 0,
+      self_ref: None,
     })
+    worker1.send(InitWorker(worker1))
+
     let worker2 = system.spawn(worker_behavior, WorkerState::{
       id: 2,
       tasks_completed: 0,
+      self_ref: None,
     })
+    worker2.send(InitWorker(worker2))
+
     let worker3 = system.spawn(worker_behavior, WorkerState::{
       id: 3,
       tasks_completed: 0,
+      self_ref: None,
     })
+    worker3.send(InitWorker(worker3))
 
     // Register them
     master.send(RegisterWorker(worker1))

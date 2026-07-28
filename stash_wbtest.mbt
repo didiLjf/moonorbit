@@ -79,6 +79,7 @@ async test "actor stash and unstash messages" {
     actor.send(Print("stashed2"))
     // Unlock (should trigger unstash)
     actor.send(Unlock)
+    @async.sleep(20)
     actor.send(Print("world"))
 
     @async.sleep(50)

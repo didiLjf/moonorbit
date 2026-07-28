@@ -7,16 +7,16 @@ priv enum ExtraChildMsg {
 ///|
 async fn extra_child_behavior(
   _context : Context,
-  state : Ref[Int],
+  state : Int,
   msg : ExtraChildMsg,
-) -> Ref[Int] {
+) -> Int {
   @async.pause()
   match msg {
     ExtraCrash => raise TestError
     ExtraPing(reply_to) => {
-      state.val = state.val + 1
-      reply_to.send("pong:" + state.val.to_string())
-      state
+      let next_state = state + 1
+      reply_to.send("pong:" + next_state.to_string())
+      next_state
     }
   }
 }
@@ -39,24 +39,14 @@ async fn extra_parent_behavior(
     ExtraSpawnChildren(_strategy) => {
       let child1 = context.spawn(
         extra_child_behavior,
-        { val: 0 },
+        0,
         supervisor=Supervisor::new(OneForOne, 0), // child local retry limit = 0
       )
       let child2 = context.spawn(
         extra_child_behavior,
-        { val: 0 },
+        0,
         supervisor=Supervisor::new(OneForOne, 0),
       )
-      // Register children under the parent's supervisor strategy
-      let reg = context.system.registry.val
-      for control in reg {
-        if control.id == child1.id || control.id == child2.id {
-          // Update control's parent_id and strategy
-          // Wait! context.spawn already registered them with parent_id = Some(context.actor_id)!
-          // Yes! context.spawn automatically sets parent_id to context.actor_id!
-          let _ = 0
-        }
-      }
       state.val.push(child1)
       state.val.push(child2)
       state
@@ -114,7 +104,7 @@ async test "supervision one-for-all strategy restart" {
     child1.send(ExtraCrash)
     @async.sleep(30) // Let OneForAll supervisor restart both children!
 
-    // Under OneForAll, BOTH children are restarted, so their states reset to initial state { val: 0 }!
+    // Under OneForAll, BOTH children are restarted, so their states reset to initial state 0!
     // Let's ping child2: if it restarted, its state is reset, so ping returns "pong:1".
     // If it did not restart, its state would be 1, so ping would return "pong:2"!
     child2.send(ExtraPing(ping_ref))

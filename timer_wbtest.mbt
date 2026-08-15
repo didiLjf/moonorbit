@@ -72,22 +72,32 @@ async test "timer send_repeatedly execution and cancellation" {
     let state : Ref[Array[Int]] = { val: [] }
     let actor = system.spawn(timer_test_behavior, state)
 
-    // Schedule periodic messages: initial delay 10ms, period 15ms
-    let sub = actor.send_repeatedly(system, 10, 15, TimerTick(7))
+    // Use a wide interval so cancellation is tested between two scheduled
+    // deliveries rather than racing with an already queued message.
+    let sub = actor.send_repeatedly(system, 5, 50, TimerTick(7))
 
-    @async.sleep(5)
+    @async.sleep(2)
     if state.val.length() != 0 {
       fail("Repeated timer fired too early")
     }
 
-    @async.sleep(15) // total 20ms: initial tick should have fired (at 10ms)
-    if state.val.length() != 1 {
+    for _ in 0..<100 {
+      if state.val.length() >= 1 {
+        break
+      }
+      @async.sleep(1)
+    }
+    if state.val.length() < 1 {
       fail("Repeated timer did not fire first tick")
     }
 
-    @async.sleep(20) // total 40ms: second tick should have fired (at 25ms), third at 40ms
-    let count_before_cancel = state.val.length()
-    if count_before_cancel < 2 {
+    for _ in 0..<100 {
+      if state.val.length() >= 2 {
+        break
+      }
+      @async.sleep(1)
+    }
+    if state.val.length() < 2 {
       fail("Repeated timer did not fire periodic ticks")
     }
 

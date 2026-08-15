@@ -1,5 +1,6 @@
 import {
   "didiLjf/moonorbit",
+  "moonbitlang/core/env",
   "moonbitlang/async",
 }
 

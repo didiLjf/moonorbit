@@ -35,13 +35,19 @@ jobs:
           moon install
 
       - name: moon check
-        run: moon check
+        run: moon check --deny-warn
 
       - name: moon build
         run: moon build
 
-      - name: moon test
-        run: moon test --target all
+      - name: moon test (native)
+        run: moon test --target native --deny-warn
+
+      - name: moon test (JavaScript)
+        run: moon test --target js --deny-warn
+
+      - name: moon test (Wasm GC)
+        run: moon test --target wasm-gc --deny-warn
 
       - name: moon fmt --check
         run: moon fmt --check

@@ -136,8 +136,11 @@ async fn client_behavior(
       state
     }
     ReadResult(res) => {
-      println("Client received read result: " + res.to_string())
       state.result.val = res
+      match res {
+        Some(value) => println("Client received read result: " + value)
+        None => println("Client received read result: None")
+      }
       state.done.val = true
       state
     }
@@ -145,7 +148,7 @@ async fn client_behavior(
 }
 
 ///|
-fn main {
+async fn main {
   @async.with_task_group(group => {
     let system = @didiLjf/moonorbit.ActorSystem::new("dist_kv_system", group)
 

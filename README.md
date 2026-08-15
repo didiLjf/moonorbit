@@ -5,7 +5,7 @@
 
 MoonOrbit 是一个专为 **MoonBit** 设计的轻量级、高性能、生产级别的 Actor 并发模型框架。本项目基于 MoonBit 官方的异步运行时 `moonbitlang/async` 构建，旨在为 MoonBit 开发人员提供高吞吐、低延迟、高容错的分布式/并发系统开发基石。
 
-本项目已通过 MoonBit 国产基础软件开源大赛 (OSC 2026) 预验收审核。
+本项目已按 MoonBit 国产基础软件开源大赛 (OSC 2026) 要求完成预验收自查。
 
 ---
 
@@ -57,7 +57,7 @@ MoonOrbit 完整实现了生产级 Actor 框架所需的各项核心能力，并
 ```moonbit
 // moon.mod
 import {
-  "didiLjf/moonorbit@0.1.0"
+  "didiLjf/moonorbit@0.2.0"
 }
 ```
 
@@ -125,7 +125,7 @@ moon run --target native cmd/work_pulling
 ```
 
 ### 3. Concurrency Ring Benchmark (吞吐与延时基准测试)
-创建 100 个 Actor 环形相连，将一条消息在环中快速流转 20,000 次，利用底层 C 语言 clock 函数精确测量 CPU 周期耗时并输出吞吐吞吐吞吐吞吐吞吐吞吐吞吐速率。
+创建 100 个 Actor 环形相连，将一条消息在环中快速流转 20,000 次，利用 MoonBit 环境时钟测量耗时并输出吞吐速率。
 ```bash
 moon run --target native cmd/benchmarks
 ```
@@ -134,7 +134,7 @@ moon run --target native cmd/benchmarks
 
 ## 本地测试与工具链验证 (Verification)
 
-本项目遵循 OSC 2026 大赛官方规范，不包含任何外部不安全的依赖，在最新 MoonBit 工具链 (v0.10.3) 下完全能够通过静态检查与测试。
+本项目遵循 OSC 2026 大赛官方规范，不包含项目自定义的原生不安全 FFI；当前验收使用 MoonBit 工具链 v0.10.4。
 
 ### 1. 运行代码格式化检查 (Formatting)
 ```bash
@@ -148,11 +148,12 @@ moon check
 
 ### 3. 运行自动化测试套件 (Unit Tests)
 ```bash
-moon test --target native
+moon test --target native --deny-warn
 ```
-或运行 WASM 兼容测试：
+同时运行 JavaScript 与 Wasm GC 兼容测试：
 ```bash
-moon test --target wasm-gc
+moon test --target js --deny-warn
+moon test --target wasm-gc --deny-warn
 ```
 
 ---

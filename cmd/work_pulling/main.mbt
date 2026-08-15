@@ -144,7 +144,7 @@ async fn master_behavior(
 }
 
 ///|
-fn main {
+async fn main {
   @async.with_task_group(group => {
     let system = @didiLjf/moonorbit.ActorSystem::new(
       "work_pulling_system", group,

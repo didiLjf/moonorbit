@@ -62,8 +62,8 @@ async fn chat_room_behavior(
     Join(username, user_ref) => {
       state.members.set(username, user_ref)
       // Broadcast join event
-      for _, member in state.members {
-        member.send(
+      for _, user_ref in state.members {
+        user_ref.send(
           ReceiveSystem(username + " joined the room " + state.room_name),
         )
       }
@@ -72,16 +72,16 @@ async fn chat_room_behavior(
     Leave(username) => {
       state.members.remove(username)
       // Broadcast leave event
-      for _, member in state.members {
-        member.send(
+      for _, user_ref in state.members {
+        user_ref.send(
           ReceiveSystem(username + " left the room " + state.room_name),
         )
       }
       state
     }
     PostMessage(sender, text) => {
-      for _, member in state.members {
-        member.send(ReceiveMessage(sender, text))
+      for _, user_ref in state.members {
+        user_ref.send(ReceiveMessage(sender, text))
       }
       state
     }
@@ -95,12 +95,27 @@ enum ChatServerMsg {
     String,
     @didiLjf/moonorbit.ActorRef[@didiLjf/moonorbit.ActorRef[ChatRoomMsg]?]
   )
-  ListRooms(@didiLjf/moonorbit.ActorRef[Array[String]])
 }
 
 ///|
 struct ChatServerState {
   rooms : Map[String, @didiLjf/moonorbit.ActorRef[ChatRoomMsg]]
+}
+
+///|
+struct RoomReplyState {
+  result : Ref[@didiLjf/moonorbit.ActorRef[ChatRoomMsg]?]
+}
+
+///|
+async fn room_reply_behavior(
+  _context : @didiLjf/moonorbit.Context,
+  state : RoomReplyState,
+  msg : @didiLjf/moonorbit.ActorRef[ChatRoomMsg]?,
+) -> RoomReplyState {
+  @async.pause()
+  state.result.val = msg
+  state
 }
 
 ///|
@@ -125,20 +140,12 @@ async fn chat_server_behavior(
       reply_ref.send(room)
       state
     }
-    ListRooms(reply_ref) => {
-      let list = []
-      for name, _ in state.rooms {
-        list.push(name)
-      }
-      reply_ref.send(list)
-      state
-    }
   }
 }
 
 ///|
-fn main {
-  @async.with_task_group(fn(group) {
+async fn main {
+  @async.with_task_group(group => {
     let system = @didiLjf/moonorbit.ActorSystem::new("chat_system", group)
 
     // Spawn central ChatServer
@@ -151,35 +158,38 @@ fn main {
     server.send(CreateRoom("lobby", system))
     @async.sleep(20)
 
-    // Retrieve "lobby" room reference using a temporary mailbox
-    let room_mailbox : @aqueue.Queue[
-      ActorMsg[@didiLjf/moonorbit.ActorRef[ChatRoomMsg]?],
-    ] = @aqueue.Queue(kind=Unbounded)
-    let reply_ref = { id: -20, mailbox: room_mailbox }
+    // Retrieve the room reference through a typed reply actor.
+    let room_result : Ref[@didiLjf/moonorbit.ActorRef[ChatRoomMsg]?] = {
+      val: None,
+    }
+    let reply_ref = system.spawn(room_reply_behavior, RoomReplyState::{
+      result: room_result,
+    })
     server.send(GetRoom("lobby", reply_ref))
+    @async.sleep(20)
 
-    guard room_mailbox.get() is User(Some(lobby_room)) else {
+    guard room_result.val is Some(lobby_room) else {
       println("ERROR: Failed to retrieve lobby room reference.")
       system.terminate()
       return
     }
 
     // Spawn 2 chat users: Alice & Bob
-    let alice_messages = { val: [] }
+    let alice_messages : Ref[Array[String]] = { val: [] }
     let alice = system.spawn(chat_user_behavior, ChatUserState::{
       username: "Alice",
       received_messages: alice_messages,
     })
 
-    let bob_messages = { val: [] }
+    let bob_messages : Ref[Array[String]] = { val: [] }
     let bob = system.spawn(chat_user_behavior, ChatUserState::{
       username: "Bob",
       received_messages: bob_messages,
     })
 
     // Users join the lobby room
-    lobby_room.send(Join("Alice", @unsafe.cast(alice)))
-    lobby_room.send(Join("Bob", @unsafe.cast(bob)))
+    lobby_room.send(Join("Alice", alice))
+    lobby_room.send(Join("Bob", bob))
     @async.sleep(25)
 
     // Alice posts a message

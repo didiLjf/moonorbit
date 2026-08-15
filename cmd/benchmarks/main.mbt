@@ -1,7 +1,4 @@
 ///|
-fn get_cpu_ticks() -> Int = "clock"
-
-///|
 enum RingMsg {
   Link(@didiLjf/moonorbit.ActorRef[RingMsg])
   Hop(Int, @didiLjf/moonorbit.ActorRef[Unit])
@@ -10,7 +7,6 @@ enum RingMsg {
 
 ///|
 struct RingActorState {
-  id : Int
   mut next : @didiLjf/moonorbit.ActorRef[RingMsg]?
 }
 
@@ -64,8 +60,8 @@ async fn coord_behavior(
 }
 
 ///|
-fn main {
-  @async.with_task_group(fn(group) {
+async fn main {
+  @async.with_task_group(group => {
     let system = @didiLjf/moonorbit.ActorSystem::new("benchmark_system", group)
 
     let n = 100 // 100 actors
@@ -74,7 +70,7 @@ fn main {
     println("Setting up a ring of " + n.to_string() + " actors...")
     let actors = []
     for i = 0; i < n; i = i + 1 {
-      let state = RingActorState::{ id: i, next: None }
+      let state = RingActorState::{ next: None }
       let actor = system.spawn(ring_behavior, state)
       actors.push(actor)
     }
@@ -88,7 +84,7 @@ fn main {
     }
 
     // Spawn Coordinator
-    let done_flag = { val: false }
+    let done_flag : Ref[Bool] = { val: false }
     let coord = system.spawn(coord_behavior, { done_flag, })
 
     @async.sleep(20)
@@ -96,9 +92,9 @@ fn main {
     println(
       "Starting Ring Benchmark: passing message " + m.to_string() + " times...",
     )
-    let start_ticks = get_cpu_ticks()
+    let start_millis = @env.now()
 
-    actors[0].send(Start(m, @unsafe.cast(coord)))
+    actors[0].send(Start(m, coord))
 
     // Wait for completion
     for i = 0; i < 500; i = i + 1 {
@@ -108,18 +104,16 @@ fn main {
       @async.sleep(10)
     }
 
-    let end_ticks = get_cpu_ticks()
-    let elapsed_ticks = end_ticks - start_ticks
+    let end_millis = @env.now()
+    let elapsed_millis = (end_millis - start_millis).to_int()
 
     if done_flag.val {
       println("SUCCESS: Ring benchmark finished.")
-      println("Elapsed CPU ticks: " + elapsed_ticks.to_string())
-      if elapsed_ticks > 0 {
-        let throughput = m * 1000 / elapsed_ticks
+      println("Elapsed milliseconds: " + elapsed_millis.to_string())
+      if elapsed_millis > 0 {
+        let throughput = m * 1000 / elapsed_millis
         println(
-          "Throughput rate: " +
-          throughput.to_string() +
-          " hops per 1000 CPU ticks",
+          "Throughput rate: " + throughput.to_string() + " hops per second",
         )
       }
     } else {

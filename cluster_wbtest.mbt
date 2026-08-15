@@ -4,6 +4,17 @@ priv enum ClusterTestMsg {
 }
 
 ///|
+struct ClusterTestState {
+  messages : Ref[Array[String]]
+  received_at : Ref[Array[UInt64]]
+}
+
+///|
+fn ClusterTestState::new() -> ClusterTestState {
+  { messages: { val: [] }, received_at: { val: [] } }
+}
+
+///|
 fn deserialize_cluster_msg(serialized : String) -> ClusterTestMsg {
   ClusterPing(serialized)
 }
@@ -11,13 +22,14 @@ fn deserialize_cluster_msg(serialized : String) -> ClusterTestMsg {
 ///|
 async fn cluster_test_behavior(
   _context : Context,
-  state : Ref[Array[String]],
+  state : ClusterTestState,
   msg : ClusterTestMsg,
-) -> Ref[Array[String]] {
+) -> ClusterTestState {
   @async.pause()
   match msg {
     ClusterPing(s) => {
-      state.val.push(s)
+      state.messages.val.push(s)
+      state.received_at.val.push(@env.now())
       state
     }
   }
@@ -37,7 +49,7 @@ async test "cluster network remote message delivery" {
     simulator.register_node("node2", system2)
 
     // Spawn receiver on node2 with deserializer
-    let state : Ref[Array[String]] = { val: [] }
+    let state = ClusterTestState::new()
     let receiver = system2.spawn(
       cluster_test_behavior,
       state,
@@ -55,7 +67,8 @@ async test "cluster network remote message delivery" {
     remote_ref.send(ClusterPing("hello_cluster"))
     @async.sleep(20)
 
-    if state.val.length() != 1 || state.val[0] != "hello_cluster" {
+    if state.messages.val.length() != 1 ||
+      state.messages.val[0] != "hello_cluster" {
       fail("Remote message delivery failed")
     }
 
@@ -75,13 +88,14 @@ async test "cluster network latency simulation" {
     let system2 = ActorSystem::new("node2_system", group)
     simulator.register_node("node2", system2)
 
-    let state : Ref[Array[String]] = { val: [] }
+    let state = ClusterTestState::new()
     let receiver = system2.spawn(
       cluster_test_behavior,
       state,
       deserializer=deserialize_cluster_msg,
     )
 
+    let sent_at = @env.now()
     let remote_ref = RemoteRef::new("node2", receiver.id, simulator, fn(msg) {
       match msg {
         ClusterPing(s) => s
@@ -92,16 +106,19 @@ async test "cluster network latency simulation" {
     simulator.set_latency(30)
 
     remote_ref.send(ClusterPing("delayed_msg"))
-    @async.sleep(15) // should not be delivered yet
-
-    if state.val.length() != 0 {
-      fail("Message delivered too early despite latency")
+    for _ in 0..<100 {
+      if state.messages.val.length() == 1 {
+        break
+      }
+      @async.sleep(1)
     }
 
-    @async.sleep(25) // total 40ms, should have arrived now
-
-    if state.val.length() != 1 || state.val[0] != "delayed_msg" {
+    if state.messages.val.length() != 1 ||
+      state.messages.val[0] != "delayed_msg" {
       fail("Delayed message delivery failed")
+    }
+    if state.received_at.val[0] - sent_at < 30 {
+      fail("Message delivered too early despite latency")
     }
 
     system1.terminate()
@@ -120,7 +137,7 @@ async test "cluster network packet drop simulation" {
     let system2 = ActorSystem::new("node2_system", group)
     simulator.register_node("node2", system2)
 
-    let state : Ref[Array[String]] = { val: [] }
+    let state = ClusterTestState::new()
     let receiver = system2.spawn(
       cluster_test_behavior,
       state,
@@ -139,7 +156,7 @@ async test "cluster network packet drop simulation" {
     remote_ref.send(ClusterPing("dropped_msg"))
     @async.sleep(30)
 
-    if state.val.length() != 0 {
+    if state.messages.val.length() != 0 {
       fail("Message should have been dropped")
     }
 

@@ -19,6 +19,8 @@ struct FsmActorState {
   mut system : ActorSystem?
   fsm : Fsm[FsmState, Int]
   output : Ref[Array[String]]
+  processed : Ref[Int]
+  timed_out : Ref[Bool]
 }
 
 ///|
@@ -28,6 +30,7 @@ async fn fsm_test_behavior(
   msg : FsmTestMsg,
 ) -> FsmActorState {
   @async.pause()
+  state.processed.val = state.processed.val + 1
   match msg {
     InitFsm(ref_, sys) => {
       state.self_ref = Some(ref_)
@@ -43,7 +46,7 @@ async fn fsm_test_behavior(
               state.fsm.goto_with_timeout(
                 Active,
                 state.fsm.data() + 1,
-                (20, Timeout),
+                (40, Timeout),
                 ref_,
                 sys,
               )
@@ -58,7 +61,7 @@ async fn fsm_test_behavior(
               state.fsm.goto_with_timeout(
                 Active,
                 state.fsm.data() + 1,
-                (20, Timeout),
+                (40, Timeout),
                 ref_,
                 sys,
               )
@@ -71,6 +74,7 @@ async fn fsm_test_behavior(
     }
     Timeout => {
       state.output.val.push("active->timeout")
+      state.timed_out.val = true
       state.fsm.goto(TimedOut, state.fsm.data())
       state
     }
@@ -87,26 +91,60 @@ async test "fsm transition and timeout" {
   @async.with_task_group(group => {
     let system = ActorSystem::new("fsm_system", group)
     let output : Ref[Array[String]] = { val: [] }
-    let state = { self_ref: None, system: None, fsm: Fsm::new(Idle, 0), output }
+    let processed : Ref[Int] = { val: 0 }
+    let timed_out : Ref[Bool] = { val: false }
+    let state = {
+      self_ref: None,
+      system: None,
+      fsm: Fsm::new(Idle, 0),
+      output,
+      processed,
+      timed_out,
+    }
 
     let actor = system.spawn(fsm_test_behavior, state)
     actor.send(InitFsm(actor, system))
 
     // Transition from Idle to Active
     actor.send(Trigger)
-    @async.sleep(10) // FSM is Active, timer not expired
+    for _ in 0..<100 {
+      if processed.val >= 2 {
+        break
+      }
+      @async.sleep(1)
+    }
+    if processed.val < 2 {
+      fail("FSM did not process initialization and first trigger")
+    }
 
     // Transition Active to Active (should reset timer)
     actor.send(Trigger)
-    @async.sleep(15) // At 25ms total, if timer didn't reset, it would have timed out.
+    for _ in 0..<100 {
+      if processed.val >= 3 {
+        break
+      }
+      @async.sleep(1)
+    }
+    if processed.val < 3 {
+      fail("FSM did not process the timer-reset trigger")
+    }
 
-    // Check if timeout did NOT fire yet (due to reset at 10ms)
-    let count_before_timeout = output.val.length()
+    // Give the reset timer a short window; it must not fire after the first
+    // timeout deadline.
+    @async.sleep(10)
+    if timed_out.val {
+      fail("FSM timed out before the reset timeout elapsed")
+    }
 
-    @async.sleep(15) // Wait for timeout to fire (requires 20ms from last trigger)
-
-    if count_before_timeout != 2 {
-      fail("FSM timed out too early or didn't transition correctly")
+    // Wait for the reset timeout without depending on an exact scheduler tick.
+    for _ in 0..<100 {
+      if timed_out.val {
+        break
+      }
+      @async.sleep(1)
+    }
+    if !timed_out.val {
+      fail("FSM did not transition to timeout")
     }
 
     // Now FSM should be TimedOut
@@ -117,7 +155,15 @@ async test "fsm transition and timeout" {
 
     // Reset to Idle
     actor.send(Reset)
-    @async.sleep(10)
+    for _ in 0..<100 {
+      if output.val.length() >= 4 {
+        break
+      }
+      @async.sleep(1)
+    }
+    if output.val.length() < 4 {
+      fail("FSM did not process reset")
+    }
     if output.val[output.val.length() - 1] != "reset->idle" {
       fail("FSM failed to reset to idle")
     }

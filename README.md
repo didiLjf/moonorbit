@@ -134,7 +134,7 @@ moon run --target native cmd/benchmarks
 
 ## 本地测试与工具链验证 (Verification)
 
-本项目遵循 OSC 2026 大赛官方规范，不包含项目自定义的原生不安全 FFI；当前验收使用 MoonBit 工具链 v0.10.4。
+本项目遵循 OSC 2026 大赛官方规范，不包含项目自定义的原生不安全 FFI；当前验收使用官方稳定版 MoonBit 工具链 v0.10.7。
 
 ### 1. 运行代码格式化检查 (Formatting)
 ```bash

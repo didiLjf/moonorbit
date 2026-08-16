@@ -134,11 +134,11 @@
 
         <h2>6. 代码规模预期与当前进度</h2>
         <p>预计核心框架最终代码规模将达到 <strong>4,000 ~ 10,000 行</strong>，满足比赛推荐的体量标准。</p>
-        <p><strong>Phase 1 进度</strong>：原型框架与核心机制开发完毕，两个公开仓库均有 30 个作者为 <code>didiLjf</code> 的功能演进 Commit。已配套完整测试，并在 native、JavaScript、Wasm GC 三个平台门禁中通过。</p>
+        <p><strong>Phase 1 进度</strong>：原型框架与核心机制开发完毕，两个公开仓库均有超过 30 个作者为 <code>didiLjf</code> 的功能演进 Commit。已配套完整测试，并在 native、JavaScript、Wasm GC 三个平台门禁中通过。</p>
 
         <h2>7. 针对初审反馈（“提交数不足”、“非MVP”）的改进说明</h2>
         <ul>
-            <li><strong>关于赛期活跃度与分支同步</strong>：GitHub 默认分支为 <code>main</code>，GitLink 默认分支为 <code>master</code>；两端均含有 30 个清晰原子化的 Commit，受版本控制的代码树逐项一致。</li>
+            <li><strong>关于赛期活跃度与分支同步</strong>：GitHub 默认分支为 <code>main</code>，GitLink 默认分支为 <code>master</code>；两端均含有超过 30 个清晰原子化的 Commit，受版本控制的代码树逐项一致。</li>
             <li><strong>关于 MVP 功能完备性</strong>：本项目已全面废除桩代码。基于 <code>moonbitlang/async</code> 协程和异步队列实现了真实的 **Actor 异步消息循环**、**线程安全非阻塞发送** 以及 **Akka 样式的 One-For-One 容错监督重启机制**（崩溃时重置状态至初始值并记录重试上限），并增加了针对异常重启的单元测试且全部通过。已具备完整的 MVP 原型。</li>
             <li><strong>关于调度器 Scheduler::run 补充实现</strong>：响应评审意见，彻底重构并补全了先前空置的 <code>Scheduler::run</code> 调度事件循环。基于协程让渡机制（<code>@async.pause</code>）实现了非阻塞的生命周期状态监听，使调度器可持续挂起运行至系统显式终止（<code>terminate()</code>），已编写集成测试并全部通过。</li>
         </ul>

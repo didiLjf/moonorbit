@@ -2,6 +2,11 @@
 
 All notable changes to the MoonOrbit project will be documented in this file.
 
+## [0.2.1] - 2026-08-16
+
+- Updated the project metadata and generated interface with the official MoonBit stable toolchain v0.10.7.
+- Added cross-platform CI execution for all five CLI application scenarios.
+
 ## [0.2.0] - 2026-07-28
 
 ### Added

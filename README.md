@@ -57,7 +57,7 @@ MoonOrbit 完整实现了生产级 Actor 框架所需的各项核心能力，并
 ```moonbit
 // moon.mod
 import {
-  "didiLjf/moonorbit@0.2.0"
+  "didiLjf/moonorbit@0.2.1"
 }
 ```
 

@@ -49,5 +49,13 @@ jobs:
       - name: moon test (Wasm GC)
         run: moon test --target wasm-gc --deny-warn
 
+      - name: Run CLI application scenarios
+        run: |
+          moon run --target native cmd/main
+          moon run --target native cmd/distributed_kv
+          moon run --target native cmd/work_pulling
+          moon run --target native cmd/chat_room
+          moon run --target native cmd/benchmarks
+
       - name: moon fmt --check
         run: moon fmt --check
